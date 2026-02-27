@@ -83,14 +83,11 @@ curl -N -X POST http://localhost:8000/query/stream \
 
 ## Known Limitations & Future Ideas
 
-A few rough edges to be aware of:
-
-- The LLM classifier occasionally returns unexpected labels — "cooking" turns out to be a surprisingly fuzzy concept.
+- The LLM classifier occasionally returns unexpected labels as "cooking" can be a relative term sometimes
 - Cookware extraction can miss unusual tool names or over-eagerly extract generic ones.
 - No chat persistence yet — conversation history only lives in frontend state for the current session.
 - Ingredient queries don't currently trigger cookware validation (only recipe requests do). A nice future improvement would be to extend that validation to any recipe suggested in an ingredient response.
 - Non-English queries aren't explicitly handled. The LLM might do fine, but the classification prompts are English-only.
-- There's no memory pruning for long conversations — each query is processed independently without prior context.
 
 ---
 
