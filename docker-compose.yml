@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: cooking-ai-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # NEXT_PUBLIC_* vars must be baked in at build time.
+        # From the browser's perspective, the backend is reachable at localhost:8000
+        # via the host port mapping above — so localhost is correct here.
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: cooking-ai-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

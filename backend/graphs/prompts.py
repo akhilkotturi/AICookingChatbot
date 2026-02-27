@@ -36,22 +36,24 @@ handle_general_prompt = PromptTemplate(
 )
 
 handle_recipe_prompt = PromptTemplate(
-    input_variables=["query", "search_result"],
+    input_variables=["query"],
     template="""
-    You are a cooking assistant. Answer the following question about a recipe or how to cook a specific dish. Try to be as inclusive and helpful as possible in your response. Provide detailed explanations and suggestions when relevant. 
+    You are a cooking assistant. Answer the following question about a recipe or how to cook a specific dish. Try to be as inclusive and helpful as possible in your response. Provide detailed explanations and suggestions when relevant.
+    You have access to a web search tool — use it if you need current, specific, or detailed recipe information.
+
     Question: {query}
-    Search Result: {search_result}
 
     Answer:
     """
 )
 
 handle_ingredients_prompt = PromptTemplate(
-    input_variables=["query", "search_result"],
+    input_variables=["query"],
     template="""
     You are a cooking assistant. Answer the following question about ingredients, which could be about what to cook with certain ingredients, about ingredient substitutions, or where to find certain ingredients. Try to be as inclusive and helpful as possible in your response. Provide detailed explanations and suggestions when relevant.
+    You have access to a web search tool — use it if you need specific or current information.
+
     Question: {query}
-    Search Result: {search_result}
 
     Answer:
     """

@@ -9,3 +9,5 @@ class State(TypedDict):
     question_type: Optional[str]
     cookware_in_use: Optional[List[str]]
     result : Optional[str]
+    debug: Optional[bool]
+    debug_trace: Optional[List[str]]

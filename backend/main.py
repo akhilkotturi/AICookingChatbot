@@ -22,12 +22,13 @@ app.add_middleware(
 
 @app.post("/query", response_model=ChatResponse)
 def query(request: ChatRequest):
-    result = graph.invoke({"query": request.query})
+    result = graph.invoke({"query": request.query, "debug": request.debug, "debug_trace": []})
     return ChatResponse(
         result=result["result"],
         cookware_in_use=result.get("cookware_in_use"),
         scope=result["scope"],
         question_type=result.get("question_type"),
+        debug_trace=result.get("debug_trace") if request.debug else None,
     )
 
 
@@ -35,7 +36,7 @@ def query(request: ChatRequest):
 async def query_stream(request: ChatRequest):
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
-            result = graph.invoke({"query": request.query})
+            result = graph.invoke({"query": request.query, "debug": request.debug, "debug_trace": []})
             text = result.get("result", "") or ""
 
             chunk_size = 24
@@ -46,6 +47,7 @@ async def query_stream(request: ChatRequest):
                 "scope": result.get("scope"),
                 "question_type": result.get("question_type"),
                 "cookware_in_use": result.get("cookware_in_use"),
+                "debug_trace": result.get("debug_trace") if request.debug else None,
             }
             yield {"event": "done", "data": json.dumps(meta)}
         except Exception as exc:

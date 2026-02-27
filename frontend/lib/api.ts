@@ -15,6 +15,7 @@ export interface StreamMeta {
     scope: string | null;
     question_type: string | null;
     cookware_in_use: string[] | null;
+    debug_trace?: string[] | null;
 }
 
 /** Non-streaming POST /query (kept for compatibility / testing). */
