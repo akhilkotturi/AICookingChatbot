@@ -1,6 +1,6 @@
 # AI Cooking Chatbot
 
-A fun little app that lets you ask cooking questions and get smart, tailored answers — powered by LangGraph, FastAPI, and Next.js.
+An AI Powered Chatbot that helps you with various cooking-related questions.
 
 ---
 
