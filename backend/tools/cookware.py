@@ -1,54 +1,58 @@
-from typing import Set, List;
+from typing import List
 
-COOKWARE: Set[str] = {
-  "Spatula",
-  "Frying Pan",
-  "Little Pot",
-  "Stovetop",
-  "Whisk",
-  "Knife",
-  "Ladle",
-  "Spoon"
+DEFAULT_COOKWARE = {
+    "Spatula", "Frying Pan", "Little Pot", "Stovetop",
+    "Whisk", "Knife", "Ladle", "Spoon", "Cutting Board",
+    "Mixing Bowl", "Baking Sheet", "Oven",
 }
 
-# Words similar to what's in COOKWARE, in case they are used in recipe
-SYNONYMS = {
-    "wooden spatula": "Spatula",
-
-    "skillet": "Frying Pan",
-    "pan": "Frying Pan",
-    "frying pan": "Frying Pan",
-
-    "saucepan": "Little Pot",
-    "pot": "Little Pot",
-    "little pot": "Little Pot",
-
-    "stove": "Stovetop",
-    "stovetop": "Stovetop",
-
-    "big spoon": "Ladle",
-
+SYNONYMS: dict[str, str] = {
+    "wooden spatula": "Spatula", "rubber spatula": "Spatula",
+    "skillet": "Frying Pan", "pan": "Frying Pan", "nonstick pan": "Frying Pan",
+    "sauté pan": "Frying Pan", "saute pan": "Frying Pan",
+    "saucepan": "Little Pot", "pot": "Little Pot", "small pot": "Little Pot",
+    "stockpot": "Large Pot", "large pot": "Large Pot",
+    "dutch oven": "Dutch Oven",
+    "stove": "Stovetop", "range": "Stovetop", "burner": "Stovetop",
+    "big spoon": "Ladle", "soup ladle": "Ladle",
     "wooden spoon": "Spoon",
-    "spoon": "Spoon",
+    "chopping board": "Cutting Board", "chef's knife": "Knife",
+    "chef knife": "Knife", "paring knife": "Knife",
+    "baking tray": "Baking Sheet", "sheet pan": "Baking Sheet",
+    "cookie sheet": "Baking Sheet",
+    "bowl": "Mixing Bowl",
+    "measuring cup": "Measuring Cup", "measuring cups": "Measuring Cup",
+    "measuring spoons": "Measuring Spoon",
+    "instant pot": "Instant Pot", "pressure cooker": "Pressure Cooker",
+    "slow cooker": "Slow Cooker", "air fryer": "Air Fryer",
+    "toaster oven": "Toaster Oven",
 }
+
+ALL_COOKWARE = sorted([
+    "Air Fryer", "Baking Sheet", "Blender", "Cast Iron Skillet",
+    "Cutting Board", "Dutch Oven", "Food Processor", "Frying Pan",
+    "Grill", "Hand Mixer", "Instant Pot", "Knife", "Ladle",
+    "Large Pot", "Little Pot", "Measuring Cup", "Measuring Spoon",
+    "Microwave", "Mixing Bowl", "Oven", "Pressure Cooker",
+    "Rice Cooker", "Rolling Pin", "Slow Cooker", "Spatula",
+    "Spoon", "Stand Mixer", "Stovetop", "Toaster Oven",
+    "Tongs", "Vegetable Peeler", "Whisk", "Wok",
+])
+
 
 def normalize(tool: str) -> str:
-    t = tool.strip()
-    key = t.lower()
-    return SYNONYMS.get(key, t)
+    key = tool.strip().lower()
+    return SYNONYMS.get(key, tool.strip().title())
 
-def missing_cookware(required: List[str]) -> List[str]:
-    '''
-    Returns list of cookware not in COOKWARE
-    '''
-    seen = set()
-    missing = []
 
+def missing_cookware(required: List[str], user_cookware: List[str] | None = None) -> List[str]:
+    available = {normalize(i) for i in user_cookware} if user_cookware else DEFAULT_COOKWARE
+    seen: set[str] = set()
+    missing: list[str] = []
     for tool in required:
-        normalized = normalize(tool)
-        if normalized not in seen:
-            seen.add(normalized)
-            if normalized not in COOKWARE:
-                missing.append(normalized)
-
+        n = normalize(tool)
+        if n not in seen:
+            seen.add(n)
+            if n not in available:
+                missing.append(n)
     return missing

@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph, END, START
+from langgraph.graph import StateGraph, END
 from .state import State
 from .nodes import (
     classify_scope,
@@ -24,21 +24,18 @@ graph.set_entry_point("classify_scope")
 
 graph.add_conditional_edges(
     "classify_scope",
-    lambda state: state["scope"],
-    {
-        "in_scope": "classify_question_type",
-        "out_of_scope": "handle_reject",
-    }
+    lambda s: s["scope"],
+    {"in_scope": "classify_question_type", "out_of_scope": "handle_reject"},
 )
 
 graph.add_conditional_edges(
     "classify_question_type",
-    lambda state: state["question_type"],
+    lambda s: s["question_type"],
     {
         "ingredients_query": "handle_ingredients",
         "recipe_request": "handle_recipe",
         "general": "handle_general",
-    }
+    },
 )
 
 graph.add_edge("handle_ingredients", END)
