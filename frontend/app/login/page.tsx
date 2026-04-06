@@ -32,6 +32,7 @@ function LoginPageContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const next         = searchParams.get("next") || "/dashboard";
+  const callbackError = searchParams.get("error");
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -44,11 +45,17 @@ function LoginPageContent() {
   }
 
   async function handleGoogle() {
+    setError(null);
     const supabase = createClient();
-    await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback?next=${next}` },
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+      },
     });
+    if (error) {
+      setError(error.message);
+    }
   }
 
   return (
@@ -178,7 +185,7 @@ function LoginPageContent() {
               Sign in to continue cooking
             </p>
 
-            {error && (
+            {(error || callbackError) && (
               <div className="animate-fade-in" style={{
                 padding: "12px 14px",
                 background: "var(--accent-light)",
@@ -188,7 +195,7 @@ function LoginPageContent() {
                 fontSize: "0.875rem",
                 marginBottom: "16px",
               }}>
-                {error}
+                {error || callbackError}
               </div>
             )}
 

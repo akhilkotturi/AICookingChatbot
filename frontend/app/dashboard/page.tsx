@@ -940,15 +940,6 @@ export function DashboardClient({ user }: Props) {
                   >
                     <div className="msg-ai-label">Mise en Place</div>
 
-                    {/* Typing indicator */}
-                    {msg.isStreaming && msg.content === "" && (
-                      <div style={{ display: "flex", gap: "4px", padding: "4px 0" }}>
-                        <span className="typing-dot" />
-                        <span className="typing-dot" />
-                        <span className="typing-dot" />
-                      </div>
-                    )}
-
                     {/* Content */}
                     {msg.content && (
                       <div className="prose" style={{ width: "100%", maxWidth: "100%" }}>
