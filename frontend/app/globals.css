@@ -79,6 +79,17 @@ body {
 .prose p:first-child { margin-top: 0; }
 .prose p:last-child { margin-bottom: 0; }
 
+/* Recipe intro — first paragraph after the h1 title */
+.prose h1 + p {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-style: italic;
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  margin: 0.5em 0 1.5em;
+  line-height: 1.6;
+}
+
 /* Inline */
 .prose strong { font-weight: 600; color: var(--text); }
 .prose em { color: var(--text-muted); }
@@ -113,6 +124,72 @@ body {
 .prose th { background: var(--bg-subtle); border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-weight: 600; }
 .prose td { border: 1px solid var(--border); padding: 8px 12px; }
 .prose tr:nth-child(even) td { background: var(--bg-subtle); }
+
+/* ── Recipe modal ── */
+.recipe-modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.18);
+  width: 100%;
+  max-width: 680px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 32px;
+  animation: fadeUp 0.2s ease both;
+}
+
+/* Modal prose — larger type, richer spacing */
+.recipe-modal-prose { font-size: 1rem; }
+
+.recipe-modal-prose h1 {
+  font-size: 1.55rem;
+  margin: 0 0 0.5em;
+}
+
+.recipe-modal-prose h2 {
+  font-size: 1.05rem;
+  margin: 2em 0 0.75em;
+  padding-left: 14px;
+}
+
+.recipe-modal-prose h2::before { width: 4px; }
+
+/* Ingredient rows — two-tone with hover */
+.recipe-modal-prose ul { border-radius: var(--radius-sm); }
+.recipe-modal-prose ul li { padding: 9px 14px 9px 34px; font-size: 0.9375rem; transition: background 0.15s; }
+.recipe-modal-prose ul li:hover { background: var(--bg-card); }
+
+/* Step cards — roomier */
+.recipe-modal-prose ol { gap: 8px; }
+.recipe-modal-prose ol li {
+  padding: 12px 18px 12px 52px;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  box-shadow: var(--shadow-sm);
+}
+.recipe-modal-prose ol li::before {
+  width: 24px;
+  height: 24px;
+  font-size: 0.72rem;
+  top: 13px;
+}
+
+/* Tip blockquote — accented */
+.recipe-modal-prose blockquote {
+  border-left-width: 4px;
+  padding: 12px 18px;
+  margin: 1.25em 0;
+}
+.recipe-modal-prose blockquote p { font-size: 0.9375rem; }
+
+/* Intro paragraph after h1 */
+.recipe-modal-prose h1 + p {
+  font-size: 0.9rem;
+  padding-left: 12px;
+  margin-bottom: 1.75em;
+}
 
 /* Animations */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }

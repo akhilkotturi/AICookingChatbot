@@ -11,7 +11,7 @@ import {
 } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { MessageSquare, BookOpen, Utensils, Moon, Sun, LogOut, Send, Square, Bookmark } from "lucide-react";
+import { MessageSquare, BookOpen, Utensils, Moon, Sun, LogOut, Send, Square, Bookmark, Trash2 } from "lucide-react";
 
 const WELCOME: Message = {
   id: "welcome",
@@ -27,51 +27,66 @@ const STARTERS = [
   "Spicy Thai basil stir-fry",
 ];
 
+const CHAT_SESSIONS_KEY_PREFIX = "mise_chat_sessions_v2";
+const CONTEXT_WINDOW_OPTIONS = [6, 12, 20, 30];
+
+type PersistedMessage = Omit<Message, "timestamp"> & { timestamp: string };
+type PersistedChatSession = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messages: PersistedMessage[];
+};
+
 function formatAssistantMarkdown(text: string): string {
-  let formatted = text;
+  let out = text;
 
-  // If model starts with "Title This...", promote title and split intro paragraph.
-  formatted = formatted.replace(
-    /^([A-Z][A-Za-z0-9'&(),:\-]*(?:\s+[A-Z][A-Za-z0-9'&(),:\-]*){1,10})\s+(This|A|An)\b/,
-    "## $1\n\n$2"
+  // 1a. In the opening block (before first ##), split camelCase junctions so
+  //     "RecipePasta carbonara..." → "Recipe\n\nPasta carbonara..."
+  //     This handles the LLM gluing title text directly to the intro sentence.
+  const firstHeadingIdx = out.indexOf("\n## ");
+  const openingEnd = firstHeadingIdx > -1 ? firstHeadingIdx : Math.min(out.length, 300);
+  const openingFixed = out.slice(0, openingEnd).replace(/([a-z])([A-Z])/g, "$1\n\n$2");
+  out = openingFixed + out.slice(openingEnd);
+
+  // 1b. Promote bare title (no # prefix) that sits before ## sections.
+  if (!out.startsWith("#") && /\n##? /.test(out)) {
+    out = out.replace(/^([^\n#][^\n]+)\n/, "# $1\n\n");
+  }
+
+  // 2. Heading glued directly to preceding text without any newline: "oil## Method" → "oil\n\n## Method"
+  out = out.replace(/([^\n# ])(#{1,6} )/g, "$1\n\n$2");
+
+  // 3. Ensure blank line BEFORE headings (has newline but not blank line).
+  out = out.replace(/([^\n])\n(#{1,6} )/g, "$1\n\n$2");
+
+  // 3b. Heading name glued directly to list content with NO newline: "## Method1. " or "## Tips> "
+  out = out.replace(/(#{1,6} [A-Za-z][A-Za-z ]*)(\d+\. |> )/g, "$1\n\n$2");
+
+  // 4. Split glued list items — LLM sometimes joins them as "word- Next item" with no newline.
+  //    Match a non-space/non-newline/non-hyphen char immediately before "- " to avoid false positives.
+  out = out.replace(/([^ \n\t-])- ([A-Z0-9])/g, "$1\n- $2");
+
+  // 5. After an Ingredients/Tips/Method heading, if the first line of content has no list marker, add one.
+  //    Handles: "## Ingredients\n250g..." → "## Ingredients\n\n- 250g..."
+  out = out.replace(/(##\s*(?:Ingredients)\s*\n+)(?![-*\d#\n>])/gi, "$1- ");
+
+  // 6. Ensure blank line after heading before content (one \n → two \n).
+  out = out.replace(/(#{1,6} [^\n]+)\n(?!\n)/g, "$1\n\n");
+
+  // 7. Normalize bold-as-heading section names.
+  out = out.replace(
+    /\n?\*\*(Ingredients|Method|Instructions|Tips|Steps|Best Substitute|How To Use It|What You Can Make|What Else You.d Need):\*\*/gi,
+    "\n\n## $1"
   );
 
-  // Fallback: handle plain first lines like "Quick Pasta Carbonara This ..." or "... It's ...".
-  formatted = formatted.replace(
-    /^(?![#>\-*])(\*\*)?([A-Z][A-Za-z0-9'&(),:\- ]{6,90}?)(\*\*)?\s+(This|It(?:'|’)s)\b/,
-    (_m, _b1, title, _b2, lead) => `## ${title.trim()}\n\n${lead}`
-  );
+  // 8. Split glued numbered steps: "sentence.2. Next" → "sentence.\n2. Next"
+  out = out.replace(/([.!?])\s*(\d+\.\s)/g, "$1\n$2");
 
-  // Split common heading markers onto their own lines.
-  formatted = formatted.replace(/\s*(#{1,6}\s)/g, "\n\n$1");
+  // 9. Collapse 3+ blank lines.
+  out = out.replace(/\n{3,}/g, "\n\n");
 
-  // Normalize common section labels regardless of model style.
-  formatted = formatted.replace(/\s*(\*\*(?:Ingredients|Method|Instructions|Tips):\*\*)/gi, "\n\n$1\n");
-  formatted = formatted.replace(/\s*(#{1,6}\s*(?:Ingredients|Method|Instructions|Tips)\b:?)/gi, "\n\n$1\n");
-
-  // Ensure heading-to-list transitions are line-broken.
-  formatted = formatted.replace(/(\*\*(?:Method|Instructions):\*\*)\s*(\d+\.\s+)/gi, "$1\n$2");
-  formatted = formatted.replace(/(#{1,6}\s*(?:Method|Instructions)\b:?)[ \t]*(\d+\.\s+)/gi, "$1\n$2");
-  formatted = formatted.replace(/(\*\*Tips:\*\*)\s*(>\s+)/gi, "$1\n$2");
-  formatted = formatted.replace(/(#{1,6}\s*Tips\b:?)[ \t]*(>\s+)/gi, "$1\n$2");
-
-  // Handle plain-text section labels glued to numbered steps, e.g. "Method1.".
-  formatted = formatted.replace(/\b(Method|Instructions)\s*(\d+\.\s+)/gi, "\n\n## $1\n$2");
-
-  // Split numbered steps when they are glued to punctuation, e.g. "draining.2.".
-  formatted = formatted.replace(/([.!?])\s*(\d+\.\s+)/g, "$1\n$2");
-
-  // Split bullet/numbered list markers onto their own lines.
-  formatted = formatted.replace(/\s*(-\s+)/g, "\n$1");
-  formatted = formatted.replace(/\s+(\d+\.\s+)/g, "\n$1");
-
-  // Add space where stream chunks accidentally glued words together.
-  formatted = formatted.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-
-  // Keep whitespace compact without losing intentional line breaks.
-  formatted = formatted.replace(/\n{3,}/g, "\n\n");
-
-  return formatted.trim();
+  return out.trim();
 }
 
 interface Props {
@@ -92,6 +107,9 @@ export function DashboardClient({ user }: Props) {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [previousChats, setPreviousChats] = useState<PersistedChatSession[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [contextWindowTurns, setContextWindowTurns] = useState(12);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -102,6 +120,7 @@ export function DashboardClient({ user }: Props) {
   const [catalog, setCatalog] = useState<string[]>([]);
   const [cookwareSearch, setCookwareSearch] = useState("");
   const [savingRecipeId, setSavingRecipeId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [importUrl, setImportUrl] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -112,6 +131,7 @@ export function DashboardClient({ user }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{ id: number; title: string; image: string; source_url: string; total_time: number }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [viewingRecipe, setViewingRecipe] = useState<SavedRecipe | null>(null);
 
   // Cook mode
   const [cookModeRecipe, setCookModeRecipe] = useState<SavedRecipe | null>(null);
@@ -120,11 +140,70 @@ export function DashboardClient({ user }: Props) {
   const [timerRunning, setTimerRunning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  function getChatStorageKey(): string {
+    const userKey = safeUser.id || safeUser.email || "guest";
+    return `${CHAT_SESSIONS_KEY_PREFIX}:${userKey}`;
+  }
+
+  function readPersistedChats(): PersistedChatSession[] {
+    try {
+      const raw = localStorage.getItem(getChatStorageKey());
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as PersistedChatSession[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writePersistedChats(chats: PersistedChatSession[]) {
+    localStorage.setItem(getChatStorageKey(), JSON.stringify(chats));
+  }
+
   useEffect(() => {
     const saved = localStorage.getItem("theme") as Theme | null;
     if (saved) applyTheme(saved);
+
+    const chats = readPersistedChats();
+    setPreviousChats(chats);
+
+    // Auto-restore the latest chat on login/reload for continuity.
+    if (chats.length > 0 && messages.length === 1) {
+      const latest = chats[0];
+      const restored: Message[] = latest.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+      setMessages([WELCOME, ...restored]);
+      setCurrentChatId(latest.id);
+    }
+
     loadData();
-  }, []);
+  }, [safeUser.id, safeUser.email]);
+
+  useEffect(() => {
+    const serializable = messages
+      .filter((m) => m.id !== "welcome" && !m.isStreaming)
+      .map((m): PersistedMessage => ({ ...m, timestamp: m.timestamp.toISOString() }));
+
+    if (serializable.length === 0) return;
+
+    const sessionId = currentChatId ?? `chat_${Date.now()}`;
+    if (!currentChatId) setCurrentChatId(sessionId);
+
+    const firstUser = serializable.find((m) => m.role === "user")?.content?.trim();
+    const title = firstUser ? firstUser.slice(0, 56) : "Cooking Chat";
+    const updatedAt = new Date().toISOString();
+
+    setPreviousChats((prev) => {
+      const next = [
+        { id: sessionId, title, updatedAt, messages: serializable },
+        ...prev.filter((c) => c.id !== sessionId),
+      ]
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+        .slice(0, 20);
+
+      writePersistedChats(next);
+      return next;
+    });
+  }, [messages, currentChatId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -160,8 +239,9 @@ export function DashboardClient({ user }: Props) {
   const history = useCallback((): ConversationTurn[] =>
     messages
       .filter(m => m.id !== "welcome" && !m.isStreaming)
+      .slice(-contextWindowTurns)
       .map(m => ({ role: m.role, content: m.content })),
-    [messages]
+    [messages, contextWindowTurns]
   );
 
   async function handleSend(text: string) {
@@ -203,27 +283,67 @@ export function DashboardClient({ user }: Props) {
     setMessages(prev => prev.map(m => m.isStreaming ? { ...m, isStreaming: false } : m));
   }
 
+  function handleLoadPreviousChat(chatId?: string) {
+    try {
+      const chats = readPersistedChats();
+      if (chats.length === 0) return;
+      const target = chatId ? chats.find((c) => c.id === chatId) : chats[0];
+      if (!target) return;
+      const restored: Message[] = target.messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+      setMessages([WELCOME, ...restored]);
+      setCurrentChatId(target.id);
+      setActivePanel("chat");
+      setStreamError(null);
+    } catch (error) {
+      console.error("Failed to load previous chat:", error);
+    }
+  }
+
+  function handleStartNewChat() {
+    setMessages([WELCOME]);
+    setInput("");
+    setStreamError(null);
+    setCurrentChatId(null);
+  }
+
+  function handleDeletePreviousChat(chatId: string) {
+    const next = previousChats.filter((chat) => chat.id !== chatId);
+    setPreviousChats(next);
+    writePersistedChats(next);
+
+    if (currentChatId === chatId) {
+      if (next.length > 0) {
+        handleLoadPreviousChat(next[0].id);
+      } else {
+        handleStartNewChat();
+      }
+    }
+  }
+
   async function handleSaveRecipe(msg: Message) {
     setSavingRecipeId(msg.id);
-    const titleMatch = msg.content.match(/#{1,3}\s+(.+)/);
+    const formatted = formatAssistantMarkdown(msg.content);
+    const titleMatch = formatted.match(/^#{1,3}\s+(.+)/m);
     const title = titleMatch?.[1]?.replace(/[*_]/g, "").trim().slice(0, 80) || "Saved Recipe";
     try {
       const id = await saveRecipe({
         title,
-        content: msg.content,
+        content: formatted,
         cookware_used: msg.meta?.cookware_in_use || [],
         tags: msg.meta?.question_type ? [msg.meta.question_type] : [],
       });
       const newRecipe: SavedRecipe = {
-        id, title, content: msg.content,
+        id, title, content: formatted,
         user_id: safeUser.id,
         cookware_used: msg.meta?.cookware_in_use || [],
         tags: msg.meta?.question_type ? [msg.meta.question_type] : [],
         created_at: new Date().toISOString(),
       };
       setSavedRecipes(prev => [newRecipe, ...prev]);
-    } catch (e) { console.error(e); }
-    finally { setSavingRecipeId(null); }
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Could not save recipe.");
+    } finally { setSavingRecipeId(null); }
   }
 
   async function handleDeleteRecipe(id: string) {
@@ -343,20 +463,52 @@ export function DashboardClient({ user }: Props) {
   }
 
   function handleCookMode(recipe: SavedRecipe) {
-    setCookModeRecipe(recipe);
+    // Always normalize content before cook mode so parseCookSteps can find ## Method
+    const normalized = recipe.content.startsWith("#")
+      ? recipe.content
+      : formatAssistantMarkdown(recipe.content);
+    setCookModeRecipe({ ...recipe, content: normalized });
     setCookStep(0);
     setTimerSeconds(null);
     setTimerRunning(false);
   }
 
   function parseCookSteps(content: string): string[] {
-    const lines = content.split("\n");
-    const steps: string[] = [];
-    for (const line of lines) {
-      const match = line.match(/^\d+\.\s+(.+)/);
-      if (match) steps.push(match[1].trim());
-    }
-    return steps.length > 0 ? steps : [content];
+    // Extract only the Method/Instructions block so tips/ingredients don't bleed in.
+    const instructionsBlock = content.match(/(?:^|\n)##?\s*(Method|Instructions)\s*\n([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[2] ?? content;
+
+    // Split on numbered markers (1. or 1)) and capture everything up to the next marker.
+    // This preserves multi-line steps.
+    const parts = instructionsBlock.split(/^\s*\d+[.)]\s+/m);
+    const numbered = parts.slice(1).map(s => s.trim()).filter(Boolean);
+    if (numbered.length > 0) return numbered;
+
+    // Fallback: bullet list items (single-line only).
+    const bullets = Array.from(
+      instructionsBlock.matchAll(/^\s*[-*]\s+(.+)$/gm),
+      (m) => m[1].trim()
+    );
+    if (bullets.length > 0) return bullets;
+
+    // Last resort: split by blank lines.
+    const paragraphs = instructionsBlock.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+    return paragraphs.length > 0 ? paragraphs : [content.trim()];
+  }
+
+  function extractIngredientsMarkdown(content: string): string | null {
+    const match = content.match(/(?:^|\n)##?\s*Ingredients\s*\n([\s\S]*?)(?=\n##?\s|$)/i);
+    if (!match) return null;
+
+    const block = match[1].trim();
+    if (!block) return null;
+
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => (line.startsWith("-") || line.startsWith("*") ? line : `- ${line}`));
+
+    return lines.join("\n");
   }
 
   function parseStepTime(step: string): number | null {
@@ -376,6 +528,17 @@ export function DashboardClient({ user }: Props) {
     router.push("/login");
   }
 
+  function buildAskAboutPrompt(recipe: SavedRecipe): string {
+    const maxQueryLength = 980; // Keep below backend max_length=1000 with a little margin.
+    const header = `I saved this recipe titled \"${recipe.title}\".\n\nRecipe:\n`;
+    const footer = "\n\nPlease explain it step-by-step, suggest improvements, and answer questions about substitutions and timing.";
+    const budget = Math.max(0, maxQueryLength - header.length - footer.length);
+    const snippet = recipe.content.length > budget
+      ? `${recipe.content.slice(0, Math.max(0, budget - 30))}\n\n[Recipe truncated for context]`
+      : recipe.content;
+    return `${header}${snippet}${footer}`;
+  }
+
   const filteredCatalog = catalog.filter(i => i.toLowerCase().includes(cookwareSearch.toLowerCase()));
 
   const navItems: { panel: Panel; label: string; icon: React.ReactNode }[] = [
@@ -388,6 +551,7 @@ export function DashboardClient({ user }: Props) {
   // Cook mode overlay
   if (cookModeRecipe) {
     const steps = parseCookSteps(cookModeRecipe.content);
+    const ingredientsMarkdown = extractIngredientsMarkdown(cookModeRecipe.content);
     const currentStep = steps[cookStep] || "";
     const detectedTime = parseStepTime(currentStep);
 
@@ -409,11 +573,21 @@ export function DashboardClient({ user }: Props) {
 
         {/* Step */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", maxWidth: "600px", margin: "0 auto", width: "100%" }}>
+          {ingredientsMarkdown && (
+            <div className="card" style={{ width: "100%", padding: "14px 16px", marginBottom: "18px", maxHeight: "180px", overflowY: "auto" }}>
+              <div style={{ fontSize: "0.78rem", letterSpacing: "0.02em", color: "var(--text-muted)", marginBottom: "8px" }}>
+                Ingredients (with amounts)
+              </div>
+              <div className="prose" style={{ maxWidth: "100%" }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{ingredientsMarkdown}</ReactMarkdown>
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: "24px" }}>
             Step {cookStep + 1} of {steps.length}
           </div>
-          <div style={{ fontSize: "1.25rem", lineHeight: "1.7", textAlign: "center", color: "var(--text)", marginBottom: "40px" }}>
-            {currentStep}
+          <div className="prose" style={{ width: "100%", maxWidth: "100%", fontSize: "1.05rem", lineHeight: 1.75, marginBottom: "40px" }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentStep}</ReactMarkdown>
           </div>
 
           {/* Timer */}
@@ -458,6 +632,48 @@ export function DashboardClient({ user }: Props) {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
+
+      {/* ── RECIPE DETAIL MODAL ── */}
+      {viewingRecipe && (
+        <div
+          onClick={() => setViewingRecipe(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="recipe-modal"
+          >
+            {/* Modal header */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "20px", gap: "16px" }}>
+              <div>
+                <h2 className="font-serif" style={{ fontSize: "1.4rem", fontStyle: "italic", margin: "0 0 4px" }}>{viewingRecipe.title}</h2>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-faint)" }}>{new Date(viewingRecipe.created_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}</div>
+              </div>
+              <button onClick={() => setViewingRecipe(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "1.4rem", lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>×</button>
+            </div>
+
+            {/* Rendered content */}
+            <div className="prose recipe-modal-prose" style={{ flex: 1, overflowY: "auto" }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{viewingRecipe.content.startsWith("#") ? viewingRecipe.content : formatAssistantMarkdown(viewingRecipe.content)}</ReactMarkdown>
+            </div>
+
+            {/* Footer actions */}
+            <div style={{ display: "flex", gap: "8px", paddingTop: "20px", borderTop: "1px solid var(--border)", marginTop: "20px" }}>
+              <button onClick={() => { handleCookMode(viewingRecipe); setViewingRecipe(null); }} className="btn btn-primary btn-sm">Cook</button>
+              <button
+                onClick={() => { setViewingRecipe(null); setActivePanel("chat"); handleSend(buildAskAboutPrompt(viewingRecipe)); }}
+                className="btn btn-secondary btn-sm"
+              >
+                Ask about it
+              </button>
+              {viewingRecipe.source_url && (
+                <a href={viewingRecipe.source_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }}>Source ↗</a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 39 }} />
@@ -505,6 +721,67 @@ export function DashboardClient({ user }: Props) {
             </button>
           ))}
         </nav>
+
+        {/* Chat threads */}
+        <div style={{ padding: "8px", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "6px" }}>
+          <button onClick={handleStartNewChat} className="btn btn-secondary btn-sm" style={{ width: "100%", justifyContent: "center" }}>
+            New chat
+          </button>
+          <div style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", padding: "4px 4px 2px" }}>
+            Previous Chats
+          </div>
+          <div style={{ maxHeight: "180px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", paddingRight: "2px" }}>
+            {previousChats.length === 0 ? (
+              <div style={{ fontSize: "0.78rem", color: "var(--text-faint)", padding: "4px" }}>No previous chats yet.</div>
+            ) : (
+              previousChats.map((chat) => (
+                <div
+                  key={chat.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    background: currentChatId === chat.id ? "var(--accent-light)" : "transparent",
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                  title={chat.title}
+                >
+                  <button
+                    onClick={() => handleLoadPreviousChat(chat.id)}
+                    className="btn btn-ghost btn-sm"
+                    style={{
+                      justifyContent: "flex-start",
+                      flex: 1,
+                      minWidth: 0,
+                      color: currentChatId === chat.id ? "var(--accent)" : "var(--text-muted)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {chat.title}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeletePreviousChat(chat.id);
+                    }}
+                    className="btn btn-ghost btn-sm"
+                    style={{
+                      padding: "6px",
+                      minWidth: "30px",
+                      color: "var(--text-faint)",
+                      flexShrink: 0,
+                    }}
+                    aria-label={`Delete chat ${chat.title}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
 
         {/* Kitchen section */}
         {cookware.length > 0 && (
@@ -584,6 +861,30 @@ export function DashboardClient({ user }: Props) {
                   <div style={{ fontSize: "1rem", color: "var(--text-muted)", marginBottom: "24px" }}>
                     What are we cooking today?
                   </div>
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap" }}>
+                    {previousChats.length > 0 && (
+                      <button onClick={() => handleLoadPreviousChat()} className="btn btn-secondary btn-sm">
+                        Previous chat
+                      </button>
+                    )}
+                    <button onClick={handleStartNewChat} className="btn btn-ghost btn-sm">
+                      New chat
+                    </button>
+                  </div>
+                  {previousChats.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "14px" }}>
+                      {previousChats.slice(0, 3).map((chat) => (
+                        <button
+                          key={chat.id}
+                          onClick={() => handleLoadPreviousChat(chat.id)}
+                          className="btn btn-ghost btn-sm"
+                          style={{ justifyContent: "flex-start" }}
+                        >
+                          {chat.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {STARTERS.map(s => (
                       <button key={s} onClick={() => handleSend(s)} className="btn btn-secondary btn-sm" style={{ borderRadius: "99px" }}>
@@ -701,7 +1002,15 @@ export function DashboardClient({ user }: Props) {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Error */}
+            {/* Save error */}
+            {saveError && (
+              <div style={{ margin: "0 32px", padding: "10px 14px", background: "var(--accent-light)", color: "var(--accent)", borderRadius: "var(--radius)", fontSize: "0.875rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Could not save recipe: {saveError}</span>
+                <button onClick={() => setSaveError(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", fontWeight: 700 }}>×</button>
+              </div>
+            )}
+
+            {/* Stream error */}
             {streamError && (
               <div style={{ margin: "0 32px", padding: "10px 14px", background: "var(--accent-light)", color: "var(--accent)", borderRadius: "var(--radius)", fontSize: "0.875rem" }}>
                 {streamError}
@@ -710,6 +1019,21 @@ export function DashboardClient({ user }: Props) {
 
             {/* Input */}
             <div style={{ padding: "20px 32px 24px", background: "var(--bg-card)", borderTop: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>
+                  Context window
+                </div>
+                <select
+                  value={contextWindowTurns}
+                  onChange={(e) => setContextWindowTurns(parseInt(e.target.value, 10))}
+                  className="input"
+                  style={{ width: "120px", padding: "6px 8px", fontSize: "0.78rem" }}
+                >
+                  {CONTEXT_WINDOW_OPTIONS.map((n) => (
+                    <option key={n} value={n}>Last {n} msgs</option>
+                  ))}
+                </select>
+              </div>
               <div className="chat-input-wrap">
                 <textarea
                   ref={textareaRef}
@@ -754,7 +1078,16 @@ export function DashboardClient({ user }: Props) {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
                 {savedRecipes.map(recipe => (
-                  <div key={recipe.id} className="card" style={{ padding: "20px" }}>
+                  <div
+                    key={recipe.id}
+                    className="card"
+                    style={{
+                      padding: "20px",
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: "190px",
+                    }}
+                  >
                     <h3 className="font-serif" style={{ fontSize: "1.1rem", fontStyle: "italic", margin: "0 0 8px", color: "var(--text)" }}>
                       {recipe.title}
                     </h3>
@@ -768,9 +1101,9 @@ export function DashboardClient({ user }: Props) {
                         ))}
                       </div>
                     )}
-                    <div style={{ display: "flex", gap: "8px" }}>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "auto", paddingTop: "8px" }}>
+                      <button onClick={() => setViewingRecipe(recipe)} className="btn btn-secondary btn-sm">View</button>
                       <button onClick={() => handleCookMode(recipe)} className="btn btn-primary btn-sm">Cook</button>
-                      <button onClick={() => { setActivePanel("chat"); handleSend(`Tell me more about: ${recipe.title}`); }} className="btn btn-secondary btn-sm">Ask about it</button>
                       <button onClick={() => handleDeleteRecipe(recipe.id)} className="btn btn-ghost btn-sm" style={{ marginLeft: "auto", color: "var(--text-faint)" }}>Delete</button>
                     </div>
                   </div>

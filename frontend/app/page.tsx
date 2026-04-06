@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 
 const DISHES = [
   "Spaghetti Carbonara",
@@ -88,6 +89,7 @@ function getTickerColor(index: number): string {
 export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
   const [hoveredFeature, setHoveredFeature] = useState<number | null>(null);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   useEffect(() => {
     function onScroll() {
@@ -95,6 +97,13 @@ export default function LandingPage() {
     }
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setIsSignedIn(!!session);
+    });
   }, []);
 
   return (
@@ -126,16 +135,24 @@ export default function LandingPage() {
         </Link>
 
         <div className="landing-nav-links" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <Link href="/login" className="btn btn-ghost btn-sm" style={{ color: "var(--text-muted)" }}>
-            Sign in
-          </Link>
-          <Link
-            href="/signup"
-            className="btn btn-primary btn-sm"
-            style={{ borderRadius: "99px", padding: "8px 20px" }}
-          >
-            Start cooking →
-          </Link>
+          {isSignedIn ? (
+            <Link href="/dashboard" className="btn btn-primary btn-sm" style={{ borderRadius: "99px", padding: "8px 20px" }}>
+              Go to dashboard →
+            </Link>
+          ) : (
+            <>
+              <Link href="/login" className="btn btn-ghost btn-sm" style={{ color: "var(--text-muted)" }}>
+                Sign in
+              </Link>
+              <Link
+                href="/signup"
+                className="btn btn-primary btn-sm"
+                style={{ borderRadius: "99px", padding: "8px 20px" }}
+              >
+                Start cooking →
+              </Link>
+            </>
+          )}
         </div>
       </nav>
 
@@ -197,20 +214,32 @@ export default function LandingPage() {
         </p>
 
         <div className="animate-fade-up" style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap", animationDelay: "0.15s" }}>
-          <Link
-            href="/signup"
-            className="btn btn-primary btn-lg"
-            style={{ borderRadius: "99px" }}
-          >
-            Start cooking — it's free
-          </Link>
-          <Link
-            href="/login"
-            className="btn btn-secondary btn-lg"
-            style={{ borderRadius: "99px" }}
-          >
-            Sign in
-          </Link>
+          {isSignedIn ? (
+            <Link
+              href="/dashboard"
+              className="btn btn-primary btn-lg"
+              style={{ borderRadius: "99px" }}
+            >
+              Go to your kitchen →
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/signup"
+                className="btn btn-primary btn-lg"
+                style={{ borderRadius: "99px" }}
+              >
+                Start cooking — it&apos;s free
+              </Link>
+              <Link
+                href="/login"
+                className="btn btn-secondary btn-lg"
+                style={{ borderRadius: "99px" }}
+              >
+                Sign in
+              </Link>
+            </>
+          )}
         </div>
       </section>
 

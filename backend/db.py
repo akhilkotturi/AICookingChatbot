@@ -1,4 +1,5 @@
 import os
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.server_api import ServerApi
 
@@ -11,12 +12,17 @@ def get_client() -> AsyncIOMotorClient:
         uri = os.getenv("MONGODB_URI")
         if not uri:
             raise RuntimeError("MONGODB_URI not set")
-        _client = AsyncIOMotorClient(uri, server_api=ServerApi("1"))
+        _client = AsyncIOMotorClient(uri, server_api=ServerApi("1"), tlsCAFile=certifi.where())
     return _client
 
 
 def get_db():
     return get_client()["mise"]
+
+
+async def ping_db() -> bool:
+    await get_client().admin.command("ping")
+    return True
 
 
 # ── Collection helpers ───────────────────────────────────────────────────────

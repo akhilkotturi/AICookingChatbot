@@ -224,13 +224,41 @@ export function DashboardClient({ user }: Props) {
   }
 
   function parseCookSteps(content: string): string[] {
-    const lines = content.split("\n");
-    const steps: string[] = [];
-    for (const line of lines) {
-      const match = line.match(/^\d+\.\s+(.+)/);
-      if (match) steps.push(match[1].trim());
-    }
-    return steps.length > 0 ? steps : content.split("\n").filter(l => l.trim());
+    const instructionsBlock = content.match(/(?:^|\n)##?\s*(Method|Instructions)\s*\n([\s\S]*)/i)?.[2] ?? content;
+
+    const numbered = Array.from(
+      instructionsBlock.matchAll(/^\s*\d+[.)]\s+(.+)$/gm),
+      (m) => m[1].trim()
+    );
+    if (numbered.length > 0) return numbered;
+
+    const bullets = Array.from(
+      instructionsBlock.matchAll(/^\s*[-*]\s+(.+)$/gm),
+      (m) => m[1].trim()
+    );
+    if (bullets.length > 0) return bullets;
+
+    const paragraphs = instructionsBlock
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    return paragraphs.length > 0 ? paragraphs : [content.trim()];
+  }
+
+  function extractIngredientsMarkdown(content: string): string | null {
+    const match = content.match(/(?:^|\n)##?\s*Ingredients\s*\n([\s\S]*?)(?=\n##?\s|$)/i);
+    if (!match) return null;
+
+    const block = match[1].trim();
+    if (!block) return null;
+
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => (line.startsWith("-") || line.startsWith("*") ? line : `- ${line}`));
+
+    return lines.join("\n");
   }
 
   function parseStepTime(step: string): number | null {
@@ -355,6 +383,7 @@ export function DashboardClient({ user }: Props) {
   // Cook mode overlay
   if (cookModeRecipe) {
     const steps = parseCookSteps(cookModeRecipe.content);
+    const ingredientsMarkdown = extractIngredientsMarkdown(cookModeRecipe.content);
     const currentStep = steps[cookStep] || "";
     const detectedTime = parseStepTime(currentStep);
 
@@ -373,11 +402,21 @@ export function DashboardClient({ user }: Props) {
         </div>
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", maxWidth: "600px", margin: "0 auto", width: "100%" }}>
+          {ingredientsMarkdown && (
+            <div className="card" style={{ width: "100%", padding: "14px 16px", marginBottom: "18px", maxHeight: "180px", overflowY: "auto" }}>
+              <div style={{ fontSize: "0.78rem", letterSpacing: "0.02em", color: "var(--text-muted)", marginBottom: "8px" }}>
+                Ingredients (with amounts)
+              </div>
+              <div className="prose" style={{ maxWidth: "100%" }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{ingredientsMarkdown}</ReactMarkdown>
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: "24px" }}>
             Step {cookStep + 1} of {steps.length}
           </div>
-          <div style={{ fontSize: "1.25rem", lineHeight: "1.7", textAlign: "center", color: "var(--text)", marginBottom: "40px" }}>
-            {currentStep}
+          <div className="prose" style={{ width: "100%", maxWidth: "100%", fontSize: "1.05rem", lineHeight: 1.75, marginBottom: "40px" }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentStep}</ReactMarkdown>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", marginBottom: "40px" }}>
@@ -649,7 +688,16 @@ export function DashboardClient({ user }: Props) {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "16px" }}>
                 {savedRecipes.map(recipe => (
-                  <div key={recipe.id} className="card" style={{ padding: "20px" }}>
+                  <div
+                    key={recipe.id}
+                    className="card"
+                    style={{
+                      padding: "20px",
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: "190px",
+                    }}
+                  >
                     <h3 className="font-serif" style={{ fontSize: "1.1rem", fontStyle: "italic", margin: "0 0 8px", color: "var(--text)" }}>
                       {recipe.title}
                     </h3>
@@ -666,7 +714,7 @@ export function DashboardClient({ user }: Props) {
                         ))}
                       </div>
                     )}
-                    <div style={{ display: "flex", gap: "8px" }}>
+                    <div style={{ display: "flex", gap: "8px", marginTop: "auto", paddingTop: "8px" }}>
                       <button onClick={() => handleCookMode(recipe)} className="btn btn-primary btn-sm">Cook</button>
                       <button
                         onClick={() => { setActivePanel("chat"); handleSend(`Tell me more about: ${recipe.title}`); }}
