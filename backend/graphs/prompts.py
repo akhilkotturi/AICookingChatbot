@@ -74,41 +74,49 @@ Answer cooking questions directly and practically. Follow these formatting rules
     return [system, *_build_history(history), HumanMessage(content=query)]
 
 
-def build_recipe_messages(query: str, history: list[dict], user_cookware: list[str] | None) -> list:
+def build_recipe_messages(
+    query: str,
+    history: list[dict],
+    user_cookware: list[str] | None,
+    rag_context: list[dict] | None = None,  
+) -> list:
     cookware_ctx = ""
     if user_cookware:
         cookware_ctx = f"\n\nThe user has these tools available: {', '.join(user_cookware)}. Tailor the recipe accordingly."
 
+    rag_ctx = ""
+    if rag_context:
+        rag_ctx = "\n\nThe user has previously saved these related recipes. Reference them if relevant but don't just repeat them:\n"
+        for r in rag_context:
+            rag_ctx += f"\n---\nTitle: {r['title']}\n{r['content'][:400]}\n"
+
     system = SystemMessage(content=f"""You are an expert cooking assistant specializing in recipes.
-When providing a recipe, copy this exact markdown structure including the blank lines:
+        When providing a recipe, use this exact markdown structure:
 
-# Recipe Name
+        # Recipe Name
 
-One or two sentence intro about the dish.
+        One or two sentence intro.
 
-## Ingredients
+        ## Ingredients
 
-- ingredient with precise measurement
-- ingredient with precise measurement
+        - ingredient with precise measurement
+        - ingredient with precise measurement
 
-## Method
+        ## Method
 
-1. First step, complete and self-contained.
-2. Second step, complete and self-contained.
-3. Third step, complete and self-contained.
+        1. First step.
+        2. Second step.
 
-## Tips
+        ## Tips
 
-> One tip as a blockquote.
+        > Optional tip as a blockquote.
 
-Rules:
-- The # title must be on its own line with a blank line after it.
-- Every ## heading must have a blank line before it AND a blank line after it before the content.
-- Each numbered step MUST be on its own line starting with its number. Never merge multiple steps onto one line.
-- Never use **bold** for headings — always use # or ##.
-- Use both metric and imperial measurements.
-- Omit the Tips section if there is nothing notable to add.
-- You have access to a web search tool — use it for specific or less common recipes.{cookware_ctx}""")
+        Rules:
+        - Always use # for the recipe title, ## for section headings, - for ingredient bullets, and numbered steps for method.
+        - Never use **bold** for section headings — always use ## headings.
+        - Use both metric and imperial measurements.
+        - Omit the Tips section if there is nothing notable to add.
+        - You have access to a web search tool — use it for specific or less common recipes.{cookware_ctx}{rag_ctx}""")  # ADD {rag_ctx} here
     return [system, *_build_history(history), HumanMessage(content=query)]
 
 
@@ -176,38 +184,20 @@ Rules:
     return [system, *_build_history(history), HumanMessage(content=query)]
 
 
-def build_ingredients_messages(query: str, history: list[dict]) -> list:
-    system = SystemMessage(content="""You are an expert cooking assistant specializing in ingredients, substitutions, and improvised cooking.
+def build_ingredients_messages(
+    query: str,
+    history: list[dict],
+    rag_context: list[dict] | None = None,  
+) -> list:
+    rag_ctx = ""
+    if rag_context:
+        rag_ctx = "\n\nRelated recipes the user has saved:\n"
+        for r in rag_context:
+            rag_ctx += f"\n- {r['title']}: {r['content'][:300]}"
 
-For "what can I make with X" questions, use this structure:
-
-## What You Can Make
-
-- Dish name — one sentence on why these ingredients suit it and the rough style of dish.
-
-Give 3-5 options ranging from simple to ambitious.
-
-## What Else You'd Need
-
-- Any extra ingredient that would significantly improve the best option. Omit this section if nothing critical is missing.
-
-> One blockquote with the most useful pairing, flavour, or technique tip.
-
-For substitution questions, use this structure:
-
-## Best Substitute
-
-One sentence on what to use and when it works.
-
-## How To Use It
-
-- Ratio or conversion (e.g. use 3/4 the amount)
-- Any adjustment needed for texture, sweetness, or acidity
-
-> One blockquote with the most important caveat.
-
-Rules:
-- Never open with a # title — start directly with the first ## heading.
-- Never use **bold text** as a substitute for a ## heading.
-- You have access to a web search tool — use it for specific sourcing or seasonal questions.""")
+    system = SystemMessage(content=f"""You are an expert cooking assistant specializing in ingredients.
+        Help users figure out what to cook with what they have, suggest substitutions, and explain flavor profiles.
+        Be creative and give multiple options when possible.
+        Format your responses using markdown: use ## for section headings, - for bullet lists, 1. for numbered steps, and > for tips or notes. Never use **bold** as a substitute for headings.
+        You have access to a web search tool — use it for specific sourcing or seasonal questions.{rag_ctx}""")  # ADD {rag_ctx} here
     return [system, *_build_history(history), HumanMessage(content=query)]

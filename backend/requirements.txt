@@ -17,3 +17,8 @@ pint
 motor
 pymongo[srv]
 ruff
+python-json-logger
+pytest
+pytest-asyncio
+httpx
+cohere

@@ -9,6 +9,9 @@ from typing import AsyncGenerator
 from jose import jwt as jose_jwt
 import httpx
 
+import time
+from utils.logging import log_query_event
+
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -29,6 +32,8 @@ from local_store import (
     delete_recipe as local_delete_recipe,
 )
 
+from services.embeddings import find_similar_recipes
+
 from routers.recipe import router as recipe_router
 
 logger = get_logger(__name__)
@@ -47,7 +52,50 @@ def _db_unavailable_error(operation: str, exc: Exception) -> HTTPException:
 
 # App
 
-app = FastAPI(title="Mise en Place API", version="2.0.0")
+app = FastAPI(
+    title="Mise en Place — AI Cooking Chatbot API",
+    description="""
+        ## AI Cooking Assistant
+
+        A conversational AI chatbot with LangGraph-based agentic orchestration,
+        semantic recipe search, and cookware-aware recipe generation.
+
+        ### Architecture
+        - **LangGraph StateGraph** routes queries through classify → handle → validate nodes
+        - **RAG pipeline** uses Cohere embeddings + MongoDB Atlas Vector Search
+        - **Agentic tools** — web search, USDA nutrition lookup, ingredient substitution
+        - **Streaming** via Server-Sent Events (SSE) for real-time token delivery
+        - **Auth** via Supabase JWT (OAuth2 compatible)
+
+        ### Quick Start
+        1. Authenticate via Supabase to get a JWT
+        2. Pass it as `Authorization: Bearer <token>`
+        3. POST to `/query/stream` with your cooking question
+    """,
+    version="2.0.0",
+    openapi_tags=[
+        {
+            "name": "chat",
+            "description": "Streaming chat and query endpoints",
+        },
+        {
+            "name": "recipe",
+            "description": "Recipe import, search, scaling, and management",
+        },
+        {
+            "name": "vision",
+            "description": "Image analysis for ingredient detection",
+        },
+        {
+            "name": "profile",
+            "description": "User cookware profile management",
+        },
+    ],
+    
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
 app.include_router(recipe_router, prefix="/recipe", tags=["recipe"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -175,7 +223,7 @@ async def get_optional_user(request: Request) -> dict | None:
 
 # Health
 
-@app.get("/health")
+@app.get("/health", tags=["chat"])
 def health():
     return {"status": "ok", "version": "2.0.0"}
 
@@ -190,13 +238,13 @@ async def health_db():
 
 # Cookware catalog
 
-@app.get("/cookware", response_model=CookwareListResponse)
+@app.get("/cookware", response_model=CookwareListResponse, tags=["profile"])
 def get_cookware_catalog():
     return CookwareListResponse(cookware=ALL_COOKWARE)
 
 # Chat streaming
 
-@app.post("/query/stream")
+@app.post("/query/stream", tags=["chat"])
 @limiter.limit("20/minute;100/day")
 async def query_stream(request: Request, body: ChatRequest, user: dict | None = Depends(get_optional_user)):
     from langchain_groq import ChatGroq
@@ -219,6 +267,8 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
     user_cookware = body.user_cookware
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        start_time = time.monotonic()
+
         try:
             # Step 1: classify scope
             scope_resp = (classify_scope_prompt | llm).invoke({"query": body.query})
@@ -242,17 +292,34 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
 
             is_recipe = question_type == "recipe_request"
 
-            # Step 3: build messages
-            if question_type == "recipe_request":
-                messages = build_recipe_messages(body.query, history, user_cookware)
-            elif question_type == "ingredients_query":
-                messages = build_ingredients_messages(body.query, history)
-            elif question_type == "food_safety":
-                messages = build_food_safety_messages(body.query, history)
-            elif question_type == "religious":
-                messages = build_religious_messages(body.query, history)
-            else:
-                messages = build_general_messages(body.query, history)
+            # Step 2.5: fetch RAG context for authenticated users
+            rag_context = []
+            if user and question_type in ("recipe_request", "ingredients_query"):
+                try:
+                    rag_context = await find_similar_recipes(
+                        query=body.query,
+                        user_id=user["user_id"],
+                        limit=3,
+                    )
+                    if rag_context:
+                        logger.info(
+                            "rag_context_loaded",
+                            extra={"recipes_found": len(rag_context)},
+                        )
+                except Exception as e:
+                    logger.warning("rag_fetch_failed", extra={"error": str(e)})
+
+                # Step 3: build messages with RAG context
+                if question_type == "recipe_request":
+                    messages = build_recipe_messages(
+                        body.query, history, user_cookware, rag_context=rag_context
+                    )
+                elif question_type == "ingredients_query":
+                    messages = build_ingredients_messages(
+                        body.query, history, rag_context=rag_context
+                    )
+                else:
+                    messages = build_general_messages(body.query, history)
 
             # Step 4: check for tool use (can't stream tool calls)
             if question_type in ("recipe_request", "ingredients_query", "food_safety", "religious"):
@@ -284,6 +351,18 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
                 missing = missing_cookware(cookware_in_use, user_cookware)
                 note = "\n\n✅ You have all the cookware needed!" if not missing else f"\n\n⚠️ **Missing cookware:** {', '.join(missing)}"
                 yield {"event": "chunk", "data": note}
+
+            latency = round((time.monotonic() - start_time) * 1000, 2)
+            log_query_event(
+                logger=logger,
+                query=body.query,
+                question_type=question_type,
+                scope=scope,
+                cookware_in_use=cookware_in_use,
+                missing_cookware=missing,
+                user_id=user["user_id"] if user else None,
+                latency_ms=latency,
+            )
 
             yield {"event": "done", "data": json.dumps({
                 "scope": scope,
@@ -358,17 +437,35 @@ async def save_recipe(request: Request, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=401, detail="Auth required")
     body = await request.json()
     from datetime import datetime, timezone
-    doc = {**body, "user_id": user["user_id"], "created_at": datetime.now(timezone.utc)}
-    try:
-        result = await recipes_col().insert_one(doc)
-        return {"id": str(result.inserted_id)}
-    except Exception as exc:
-        if not USE_LOCAL_DB_FALLBACK:
-            raise _db_unavailable_error("save_recipe", exc)
-        logger.warning("Mongo unavailable for save_recipe; using local fallback")
-        fallback_doc = {**body}
-        rid = await local_save_recipe(user["user_id"], fallback_doc)
-        return {"id": rid}
+    from services.embeddings import embed_recipe_for_storage
+
+    # Generate embedding — if this fails we still save the recipe
+    # The recipe just won't appear in semantic search results
+    embedding = await embed_recipe_for_storage(
+        title=body.get("title", ""),
+        content=body.get("content", ""),
+    )
+
+    doc = {
+        **body,
+        "user_id": user["user_id"],
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    if embedding:
+        doc["embedding"] = embedding
+        logger.info(
+            "recipe_saved_with_embedding",
+            extra={"title": body.get("title", "")},
+        )
+    else:
+        logger.warning(
+            "recipe_saved_without_embedding",
+            extra={"title": body.get("title", "")},
+        )
+
+    result = await recipes_col().insert_one(doc)
+    return {"id": str(result.inserted_id)}
 
 
 @app.delete("/recipes/{recipe_id}")

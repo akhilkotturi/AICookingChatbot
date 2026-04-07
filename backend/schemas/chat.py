@@ -8,10 +8,31 @@ class ConversationTurn(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=1000)
-    conversation_history: Optional[List[ConversationTurn]] = None
-    user_cookware: Optional[List[str]] = None
-    debug: bool = False
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="The user's cooking question",
+        examples=["How do I make pasta carbonara?"],
+    )
+    conversation_history: Optional[List[ConversationTurn]] = Field(
+        None,
+        description="Previous turns in this conversation for context",
+    )
+    user_cookware: Optional[List[str]] = Field(
+        None,
+        description="Cookware the user owns. Recipe responses will be tailored to this list.",
+        examples=[["Frying Pan", "Knife", "Oven"]],
+    )
+    session_id: str = Field(
+        default="default",
+        max_length=64,
+        description="Session identifier for Redis-backed conversation memory",
+    )
+    debug: bool = Field(
+        default=False,
+        description="If true, includes LangGraph node trace in response metadata",
+    )
 
 
 class ChatResponse(BaseModel):
