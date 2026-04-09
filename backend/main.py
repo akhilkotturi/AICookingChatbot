@@ -295,7 +295,7 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
                 scope = "in_scope"
 
             if scope == "out_of_scope":
-                yield {"event": "chunk", "data": "I'm specialized in cooking and food! Ask me about recipes, ingredients, techniques, or meal planning. 🍳"}
+                yield {"event": "chunk", "data": "I'm specialized in cooking and food! Ask me about recipes, ingredients, techniques, or meal planning."}
                 yield {"event": "done", "data": json.dumps({"scope": scope, "question_type": None, "cookware_in_use": None, "missing_cookware": None, "is_recipe": False})}
                 return
 

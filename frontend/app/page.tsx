@@ -39,7 +39,7 @@ const FEATURES = [
     accent: "accent",
   },
   {
-    icon: "🍳",
+    icon: "/logo.png",
     label: "Cookware-aware",
     title: "Recipes you can actually make",
     body: "Tell it what you own — wok, Dutch oven, instant pot — and it adapts every recipe to your setup.",
@@ -128,7 +128,7 @@ export default function LandingPage() {
         boxShadow: scrolled ? "0 1px 0 var(--border)" : "none",
       }}>
         <Link href="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "1.4rem" }}>🍳</span>
+          <img src="/logo.png" alt="Mise en Place" style={{ width: "28px", height: "28px", objectFit: "contain" }} />
           <span className="font-serif" style={{ fontSize: "1.15rem", fontStyle: "italic", color: "var(--text)" }}>
             Mise en Place
           </span>
@@ -551,7 +551,9 @@ export default function LandingPage() {
                   boxShadow: hoveredFeature === i ? "0 12px 32px rgba(28,22,18,0.12)" : "var(--shadow-sm)",
                 }}
               >
-                <div style={{ fontSize: "1.8rem", marginBottom: "12px" }}>{f.icon}</div>
+                <div style={{ fontSize: "1.8rem", marginBottom: "12px" }}>
+                  {f.icon.startsWith("/") ? <img src={f.icon} alt="" style={{ width: "1.8rem", height: "1.8rem", objectFit: "contain" }} /> : f.icon}
+                </div>
                 <div style={{
                   fontSize: "0.68rem",
                   fontWeight: 700,
@@ -691,7 +693,7 @@ export default function LandingPage() {
         gap: "12px",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "1.2rem" }}>🍳</span>
+          <img src="/logo.png" alt="Mise en Place" style={{ width: "24px", height: "24px", objectFit: "contain" }} />
           <span className="font-serif" style={{ fontSize: "1rem", fontStyle: "italic", color: "var(--text)" }}>
             Mise en Place
           </span>

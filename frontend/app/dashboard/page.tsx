@@ -716,7 +716,7 @@ export function DashboardClient({ user }: Props) {
         {/* Logo */}
         <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "1.4rem" }}>🍳</span>
+            <img src="/logo.png" alt="Mise en Place" style={{ width: "28px", height: "28px", objectFit: "contain" }} />
             <span className="font-serif" style={{ fontSize: "1.0rem", fontStyle: "italic", color: "var(--text)" }}>Mise en Place</span>
           </div>
         </div>
