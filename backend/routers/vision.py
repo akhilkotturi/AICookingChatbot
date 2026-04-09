@@ -31,13 +31,15 @@ MAX_FILE_SIZE = 4 * 1024 * 1024
 
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-# Fallback mime type detection from file extension
-EXTENSION_TO_MIME = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
+def _detect_mime_from_bytes(data: bytes) -> str | None:
+    """Return MIME type from file magic bytes, or None if unrecognised."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 class ImageAnalysisResponse(BaseModel):
@@ -88,19 +90,7 @@ async def analyze_fridge_image(
     The returned suggested_query can be sent directly to /query/stream
     to get recipe suggestions based on what's visible.
     """
-    # Validate file type — try client mime type first, then fall back to extension
-    mime_type = file.content_type
-    if mime_type not in ALLOWED_TYPES:
-        # Try to infer from file extension
-        ext = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-        mime_type = EXTENSION_TO_MIME.get(ext)
-        if not mime_type:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {file.content_type}. Use JPEG, PNG, or WebP.",
-            )
-
-    # Read and validate file size
+    # Read file first so we can validate by magic bytes, not client-supplied headers
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -108,10 +98,16 @@ async def analyze_fridge_image(
             detail="Image must be under 4MB.",
         )
 
+    # Validate file type from actual bytes — ignore client Content-Type and filename
+    mime_type = _detect_mime_from_bytes(contents)
+    if not mime_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Upload a JPEG, PNG, or WebP image.",
+        )
+
     # Encode to base64
     b64_image = base64.standard_b64encode(contents).decode("utf-8")
-    
-    # Determine media type for the data URL
     media_type = mime_type
 
     logger.info(
@@ -195,21 +191,10 @@ async def analyze_fridge_image(
         )
 
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        error_msg = str(e)
-        logger.exception("vision_analyze_failed", extra={"error": error_msg})
-        
-        # Provide more specific error messages for debugging
-        if "GROQ_API_KEY" in error_msg:
-            detail = "Vision API key not configured."
-        elif "API" in error_msg or "groq" in error_msg.lower():
-            detail = f"Vision service error: {error_msg[:100]}"
-        else:
-            detail = f"Image analysis failed: {error_msg[:100]}"
-        
+        logger.exception("vision_analyze_failed", extra={"error": str(e)})
         raise HTTPException(
             status_code=500,
-            detail=detail,
+            detail="Image analysis failed. Please try again.",
         )

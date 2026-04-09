@@ -106,8 +106,9 @@ app = FastAPI(
         },
     ],
     
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None if os.getenv("ENV") == "production" else "/docs",
+    redoc_url=None if os.getenv("ENV") == "production" else "/redoc",
+    openapi_url=None if os.getenv("ENV") == "production" else "/openapi.json",
 )
 
 app.include_router(recipe_router, prefix="/recipe", tags=["recipe"])
@@ -223,18 +224,16 @@ async def get_optional_user(request: Request) -> dict | None:
         if _JWT_SECRET:
             payload = jose_jwt.decode(token, _JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
             return {"user_id": payload.get("sub"), "email": payload.get("email")}
-        else:
-            import base64
-            payload_b64 = token.split(".")[1]
-            payload_b64 += "=" * ((4 - len(payload_b64) % 4) % 4)
-            payload = json.loads(base64.b64decode(payload_b64))
-            return {"user_id": payload.get("sub"), "email": payload.get("email")}
     except Exception:
-        verified = await _verify_with_supabase(token)
-        if verified:
-            return verified
-        logger.warning("Optional auth failed for /query/stream; continuing as anonymous")
-        return None
+        pass
+
+    # Fall back to Supabase API — never decode without signature verification
+    verified = await _verify_with_supabase(token)
+    if verified:
+        return verified
+
+    logger.warning("Optional auth failed for /query/stream; continuing as anonymous")
+    return None
 
 # Health
 
@@ -452,23 +451,35 @@ async def get_recipes(user: dict = Depends(get_current_user)):
     return {"recipes": docs}
 
 
+_MAX_RECIPE_TITLE_LEN = 200
+_MAX_RECIPE_CONTENT_LEN = 50_000  # ~50 KB
+
+
 @app.post("/recipes")
 async def save_recipe(request: Request, user: dict = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=401, detail="Auth required")
     body = await request.json()
+
+    title = str(body.get("title", ""))[:_MAX_RECIPE_TITLE_LEN]
+    content = str(body.get("content", ""))
+    if len(content) > _MAX_RECIPE_CONTENT_LEN:
+        raise HTTPException(status_code=400, detail="Recipe content exceeds maximum allowed size.")
+
     from datetime import datetime, timezone
     from services.embeddings import embed_recipe_for_storage
 
     # Generate embedding — if this fails we still save the recipe
     # The recipe just won't appear in semantic search results
     embedding = await embed_recipe_for_storage(
-        title=body.get("title", ""),
-        content=body.get("content", ""),
+        title=title,
+        content=content,
     )
 
     doc = {
         **body,
+        "title": title,
+        "content": content,
         "user_id": user["user_id"],
         "created_at": datetime.now(timezone.utc),
     }
@@ -477,12 +488,12 @@ async def save_recipe(request: Request, user: dict = Depends(get_current_user)):
         doc["embedding"] = embedding
         logger.info(
             "recipe_saved_with_embedding",
-            extra={"title": body.get("title", "")},
+            extra={"title": title},
         )
     else:
         logger.warning(
             "recipe_saved_without_embedding",
-            extra={"title": body.get("title", "")},
+            extra={"title": title},
         )
 
     try:

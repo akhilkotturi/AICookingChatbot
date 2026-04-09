@@ -1,10 +1,10 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
 class ConversationTurn(BaseModel):
-    role: str
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=4000)
 
 
 class ChatRequest(BaseModel):
