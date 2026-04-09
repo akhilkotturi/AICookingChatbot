@@ -53,6 +53,7 @@ export function DashboardClient({ user }: Props) {
   const [catalog, setCatalog] = useState<string[]>([]);
   const [cookwareSearch, setCookwareSearch] = useState("");
   const [savingRecipeId, setSavingRecipeId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Import panel
   const [importUrl, setImportUrl] = useState("");
@@ -188,6 +189,7 @@ export function DashboardClient({ user }: Props) {
 
   async function handleSaveRecipe(msg: Message) {
     setSavingRecipeId(msg.id);
+    setSaveError(null);
     const titleMatch = msg.content.match(/#{1,3}\s+(.+)/);
     const title = titleMatch?.[1]?.replace(/[*_]/g, "").trim().slice(0, 80) || "Saved Recipe";
     try {
@@ -207,8 +209,10 @@ export function DashboardClient({ user }: Props) {
         created_at: new Date().toISOString(),
       };
       setSavedRecipes(prev => [newRecipe, ...prev]);
-    } catch (e) { console.error(e); }
-    finally { setSavingRecipeId(null); }
+    } catch (e) {
+      console.error(e);
+      setSaveError(e instanceof Error ? e.message : "Failed to save recipe");
+    } finally { setSavingRecipeId(null); }
   }
 
   async function handleDeleteRecipe(id: string) {
@@ -619,6 +623,11 @@ export function DashboardClient({ user }: Props) {
                             >
                               {savingRecipeId === msg.id ? "Saving..." : "Save recipe"}
                             </button>
+                            {saveError && savingRecipeId !== msg.id && (
+                              <span style={{ marginLeft: "10px", fontSize: "0.8rem", color: "var(--color-error, #e53e3e)" }}>
+                                {saveError}
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>

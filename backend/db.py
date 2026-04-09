@@ -12,7 +12,18 @@ def get_client() -> AsyncIOMotorClient:
         uri = os.getenv("MONGODB_URI")
         if not uri:
             raise RuntimeError("MONGODB_URI not set")
-        _client = AsyncIOMotorClient(uri, server_api=ServerApi("1"), tlsCAFile=certifi.where())
+        server_selection_timeout_ms = int(os.getenv("MONGO_SERVER_SELECTION_TIMEOUT_MS", "4000"))
+        connect_timeout_ms = int(os.getenv("MONGO_CONNECT_TIMEOUT_MS", "3000"))
+        socket_timeout_ms = int(os.getenv("MONGO_SOCKET_TIMEOUT_MS", "5000"))
+
+        _client = AsyncIOMotorClient(
+            uri,
+            server_api=ServerApi("1"),
+            tlsCAFile=certifi.where(),
+            serverSelectionTimeoutMS=server_selection_timeout_ms,
+            connectTimeoutMS=connect_timeout_ms,
+            socketTimeoutMS=socket_timeout_ms,
+        )
     return _client
 
 

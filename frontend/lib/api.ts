@@ -216,3 +216,27 @@ export async function getRecipeDetail(id: number): Promise<ImportedRecipe> {
   if (!res.ok) throw new Error("Could not fetch recipe details");
   return res.json() as Promise<ImportedRecipe>;
 }
+
+export interface ImageAnalysisResult {
+  ingredients: string[];
+  suggested_query: string;
+}
+
+export async function analyzeImage(file: File): Promise<ImageAnalysisResult> {
+  const authHeaders = await getAuthHeader();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_URL}/vision/analyze`, {
+    method: "POST",
+    // No Content-Type header — browser sets it automatically with boundary
+    headers: { ...authHeaders },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || "Image analysis failed");
+  }
+  return res.json();
+}

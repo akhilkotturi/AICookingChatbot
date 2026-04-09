@@ -12,12 +12,14 @@ Key concepts:
   loosely related recipes.
 """
 import os
+import time
 import cohere
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _client: cohere.AsyncClientV2 | None = None
+_RAG_DB_COOLDOWN_UNTIL = 0.0
 
 
 def _get_client() -> cohere.AsyncClientV2:
@@ -92,6 +94,13 @@ async def find_similar_recipes(
     """
     from db import recipes_col
 
+    global _RAG_DB_COOLDOWN_UNTIL
+
+    cooldown_seconds = int(os.getenv("RAG_DB_FAILURE_COOLDOWN_SECONDS", "60"))
+    now = time.monotonic()
+    if now < _RAG_DB_COOLDOWN_UNTIL:
+        return []
+
     try:
         query_vector = await embed_text(query, input_type="search_query")
 
@@ -133,5 +142,6 @@ async def find_similar_recipes(
         return filtered
 
     except Exception as e:
+        _RAG_DB_COOLDOWN_UNTIL = time.monotonic() + cooldown_seconds
         logger.warning("vector_search_failed", extra={"error": str(e)})
         return []

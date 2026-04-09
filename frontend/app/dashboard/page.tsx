@@ -7,11 +7,11 @@ import type { Message, ConversationTurn, SavedRecipe, Panel, Theme } from "@/typ
 import {
   streamQuery, getSavedRecipes, saveRecipe, deleteRecipe,
   getCookwareProfile, saveCookwareProfile, fetchCookwareCatalog,
-  importRecipe, scaleRecipe, searchRecipes, getRecipeDetail, type ImportedRecipe,
+  importRecipe, scaleRecipe, searchRecipes, getRecipeDetail, analyzeImage, type ImportedRecipe,
 } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { MessageSquare, BookOpen, Utensils, Moon, Sun, LogOut, Send, Square, Bookmark, Trash2 } from "lucide-react";
+import { MessageSquare, BookOpen, Utensils, Moon, Sun, LogOut, Send, Square, Bookmark, Trash2, Camera } from "lucide-react";
 
 const WELCOME: Message = {
   id: "welcome",
@@ -139,6 +139,11 @@ export function DashboardClient({ user }: Props) {
   const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
   const [timerRunning, setTimerRunning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Vision
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function getChatStorageKey(): string {
     const userKey = safeUser.id || safeUser.email || "guest";
@@ -274,6 +279,28 @@ export function DashboardClient({ user }: Props) {
       setMessages(prev => prev.map(m => m.id === asstId ? { ...m, content: m.content || "Something went wrong. Please try again.", isStreaming: false } : m));
     } finally {
       setIsStreaming(false);
+    }
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImageLoading(true);
+    setImageError(null);
+
+    try {
+      const { suggested_query, ingredients } = await analyzeImage(file);
+      // Put the suggested query in the input box
+      // User can edit it before sending or just hit send
+      setInput(suggested_query);
+      setActivePanel("chat");
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "Could not analyze image.");
+    } finally {
+      setImageLoading(false);
+      // Reset so same file can be selected again
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -542,10 +569,10 @@ export function DashboardClient({ user }: Props) {
   const filteredCatalog = catalog.filter(i => i.toLowerCase().includes(cookwareSearch.toLowerCase()));
 
   const navItems: { panel: Panel; label: string; icon: React.ReactNode }[] = [
-    { panel: "chat",     label: "Chat",     icon: <MessageSquare size={15} /> },
-    { panel: "recipes",  label: "Recipes",  icon: <BookOpen size={15} /> },
+    { panel: "chat", label: "Chat", icon: <MessageSquare size={15} /> },
+    { panel: "recipes", label: "Recipes", icon: <BookOpen size={15} /> },
     { panel: "cookware", label: "Cookware", icon: <Utensils size={15} /> },
-    { panel: "import",   label: "Import",   icon: <Bookmark size={15} /> },
+    { panel: "import", label: "Import", icon: <Bookmark size={15} /> },
   ];
 
   // Cook mode overlay
@@ -940,6 +967,15 @@ export function DashboardClient({ user }: Props) {
                   >
                     <div className="msg-ai-label">Mise en Place</div>
 
+                    {/* Typing indicator */}
+                    {msg.isStreaming && msg.content === "" && (
+                      <div style={{ display: "flex", gap: "4px", padding: "4px 0" }}>
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                      </div>
+                    )}
+
                     {/* Content */}
                     {msg.content && (
                       <div className="prose" style={{ width: "100%", maxWidth: "100%" }}>
@@ -1026,15 +1062,53 @@ export function DashboardClient({ user }: Props) {
                 </select>
               </div>
               <div className="chat-input-wrap">
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageUpload}
+                  style={{ display: "none" }}
+                />
+
+                {/* Camera button */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={imageLoading || isStreaming}
+                  className="btn btn-ghost btn-sm btn-icon"
+                  title="Analyze fridge photo"
+                  style={{ flexShrink: 0, color: "var(--text-muted)" }}
+                >
+                  {imageLoading ? (
+                    <span
+                      className="auth-spinner"
+                      style={{
+                        width: "14px",
+                        height: "14px",
+                        borderColor: "var(--text-muted)",
+                        borderTopColor: "transparent",
+                      }}
+                    />
+                  ) : (
+                    <Camera size={16} />
+                  )}
+                </button>
+
                 <textarea
                   ref={textareaRef}
                   className="chat-textarea"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(input); } }}
-                  placeholder="Ask anything about cooking…"
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend(input);
+                    }
+                  }}
+                  placeholder="Ask anything about cooking… or upload a fridge photo"
                   rows={2}
                 />
+
                 {isStreaming ? (
                   <button onClick={handleStop} className="btn btn-secondary btn-sm" style={{ borderRadius: "12px", padding: "8px 14px", flexShrink: 0 }}>
                     <Square size={14} />
@@ -1047,6 +1121,18 @@ export function DashboardClient({ user }: Props) {
                   </button>
                 )}
               </div>
+
+              {/* Error message below input */}
+              {imageError && (
+                <div style={{
+                  fontSize: "0.75rem",
+                  color: "var(--accent)",
+                  marginTop: "4px",
+                }}>
+                  {imageError}
+                </div>
+              )}
+
               <div style={{ fontSize: "0.75rem", color: "var(--text-faint)", marginTop: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
                 Enter to send · Shift+Enter for new line
                 {cookware.length > 0 && (

@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import json
 import os
 import re
@@ -36,8 +37,21 @@ from services.embeddings import find_similar_recipes
 
 from routers.recipe import router as recipe_router
 
+from routers.vision import router as vision_router
+
+
 logger = get_logger(__name__)
-USE_LOCAL_DB_FALLBACK = os.getenv("LOCAL_FALLBACK_ON_DB_ERROR", "false").lower() == "true"
+USE_LOCAL_DB_FALLBACK = os.getenv("LOCAL_FALLBACK_ON_DB_ERROR", "true").lower() == "true"
+
+
+def _is_mongo_transport_outage(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "serverselectiontimeouterror" in text
+        or "ssl handshake failed" in text
+        or "tlsv1_alert_internal_error" in text
+        or "replicasetnoprimary" in text
+    )
 
 
 def _db_unavailable_error(operation: str, exc: Exception) -> HTTPException:
@@ -97,6 +111,7 @@ app = FastAPI(
 )
 
 app.include_router(recipe_router, prefix="/recipe", tags=["recipe"])
+app.include_router(vision_router, prefix="/vision", tags=["vision"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -270,8 +285,12 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
         start_time = time.monotonic()
 
         try:
-            # Step 1: classify scope
-            scope_resp = (classify_scope_prompt | llm).invoke({"query": body.query})
+            # Step 1+2: classify scope and question type in parallel
+            scope_resp, type_resp = await asyncio.gather(
+                (classify_scope_prompt | llm).ainvoke({"query": body.query}),
+                (classify_question_type_prompt | llm).ainvoke({"query": body.query}),
+            )
+
             scope = scope_resp.content.strip().lower()
             if scope not in ("in_scope", "out_of_scope"):
                 scope = "in_scope"
@@ -281,8 +300,6 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
                 yield {"event": "done", "data": json.dumps({"scope": scope, "question_type": None, "cookware_in_use": None, "missing_cookware": None, "is_recipe": False})}
                 return
 
-            # Step 2: classify question type
-            type_resp = (classify_question_type_prompt | llm).invoke({"query": body.query})
             question_type = type_resp.content.strip().lower()
             if question_type == "dietary_restriction":
                 # Backward compatibility if model emits the old label.
@@ -309,22 +326,26 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
                 except Exception as e:
                     logger.warning("rag_fetch_failed", extra={"error": str(e)})
 
-                # Step 3: build messages with RAG context
-                if question_type == "recipe_request":
-                    messages = build_recipe_messages(
-                        body.query, history, user_cookware, rag_context=rag_context
-                    )
-                elif question_type == "ingredients_query":
-                    messages = build_ingredients_messages(
-                        body.query, history, rag_context=rag_context
-                    )
-                else:
-                    messages = build_general_messages(body.query, history)
+            # Step 3: build messages for all question types
+            if question_type == "recipe_request":
+                messages = build_recipe_messages(
+                    body.query, history, user_cookware, rag_context=rag_context
+                )
+            elif question_type == "ingredients_query":
+                messages = build_ingredients_messages(
+                    body.query, history, rag_context=rag_context
+                )
+            elif question_type == "food_safety":
+                messages = build_food_safety_messages(body.query, history)
+            elif question_type == "religious":
+                messages = build_religious_messages(body.query, history)
+            else:
+                messages = build_general_messages(body.query, history)
 
             # Step 4: check for tool use (can't stream tool calls)
             if question_type in ("recipe_request", "ingredients_query", "food_safety", "religious"):
                 try:
-                    probe = llm_with_tools.invoke(messages)
+                    probe = await llm_with_tools.ainvoke(messages)
                     if probe.tool_calls:
                         tool_call = probe.tool_calls[0]
                         tool_result = search.invoke(tool_call["args"])
@@ -346,7 +367,7 @@ async def query_stream(request: Request, body: ChatRequest, user: dict | None = 
             cookware_in_use = None
             missing = None
             if is_recipe and full_text:
-                cw_resp = (check_cookware_prompt | llm).invoke({"recipe": full_text})
+                cw_resp = await (check_cookware_prompt | llm).ainvoke({"recipe": full_text})
                 cookware_in_use = [i.strip() for i in cw_resp.content.strip().split(",") if i.strip()]
                 missing = missing_cookware(cookware_in_use, user_cookware)
                 note = "\n\n✅ You have all the cookware needed!" if not missing else f"\n\n⚠️ **Missing cookware:** {', '.join(missing)}"
@@ -387,7 +408,7 @@ async def get_cookware_profile(user: dict = Depends(get_current_user)):
     try:
         doc = await profiles_col().find_one({"user_id": user["user_id"]})
     except Exception as exc:
-        if not USE_LOCAL_DB_FALLBACK:
+        if not USE_LOCAL_DB_FALLBACK and not _is_mongo_transport_outage(exc):
             raise _db_unavailable_error("get_cookware_profile", exc)
         logger.warning("Mongo unavailable for get_cookware_profile; using local fallback")
         doc = await local_get_profile(user["user_id"])
@@ -406,7 +427,7 @@ async def save_cookware_profile(request: Request, user: dict = Depends(get_curre
             upsert=True,
         )
     except Exception as exc:
-        if not USE_LOCAL_DB_FALLBACK:
+        if not USE_LOCAL_DB_FALLBACK and not _is_mongo_transport_outage(exc):
             raise _db_unavailable_error("save_cookware_profile", exc)
         logger.warning("Mongo unavailable for save_cookware_profile; using local fallback")
         await local_set_profile_cookware(user["user_id"], body.get("cookware", []))
@@ -424,7 +445,7 @@ async def get_recipes(user: dict = Depends(get_current_user)):
         for d in docs:
             d["id"] = str(d.pop("_id"))
     except Exception as exc:
-        if not USE_LOCAL_DB_FALLBACK:
+        if not USE_LOCAL_DB_FALLBACK and not _is_mongo_transport_outage(exc):
             raise _db_unavailable_error("get_recipes", exc)
         logger.warning("Mongo unavailable for get_recipes; using local fallback")
         docs = await local_list_recipes(user["user_id"], limit=100)
@@ -464,8 +485,16 @@ async def save_recipe(request: Request, user: dict = Depends(get_current_user)):
             extra={"title": body.get("title", "")},
         )
 
-    result = await recipes_col().insert_one(doc)
-    return {"id": str(result.inserted_id)}
+    try:
+        result = await recipes_col().insert_one(doc)
+        return {"id": str(result.inserted_id)}
+    except Exception as exc:
+        if not USE_LOCAL_DB_FALLBACK and not _is_mongo_transport_outage(exc):
+            raise _db_unavailable_error("save_recipe", exc)
+
+        logger.warning("Mongo unavailable for save_recipe; using local fallback")
+        fallback_id = await local_save_recipe(user["user_id"], body)
+        return {"id": fallback_id}
 
 
 @app.delete("/recipes/{recipe_id}")
@@ -482,7 +511,7 @@ async def delete_recipe(recipe_id: str, user: dict = Depends(get_current_user)):
         if not deleted:
             raise HTTPException(status_code=400, detail="Invalid recipe ID")
     except Exception as exc:
-        if not USE_LOCAL_DB_FALLBACK:
+        if not USE_LOCAL_DB_FALLBACK and not _is_mongo_transport_outage(exc):
             raise _db_unavailable_error("delete_recipe", exc)
         logger.warning("Mongo unavailable for delete_recipe; using local fallback")
         await local_delete_recipe(user["user_id"], recipe_id)
